@@ -106,6 +106,12 @@ if(WIN32)
     target_link_libraries(QuickDL PRIVATE Advapi32)
 endif()
 
+if(NOT APPLE)
+    set_target_properties(QuickDL PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+endif()
+
 set_target_properties(QuickDL PROPERTIES
     MACOSX_BUNDLE_BUNDLE_NAME "快下载"
     MACOSX_BUNDLE_ICON_FILE "kuaixiazai.icns"
@@ -178,15 +184,10 @@ install(
 )
 install(FILES README.md THIRD_PARTY_NOTICES.md DESTINATION ".")
 
-set(extra_deploy_args)
-if(APPLE)
-    list(APPEND extra_deploy_args EXCLUDE_PLUGIN_TYPES sqldrivers)
-endif()
 qt_generate_deploy_qml_app_script(
     TARGET QuickDL
     OUTPUT_SCRIPT deploy_script
     NO_UNSUPPORTED_PLATFORM_ERROR
-    ${extra_deploy_args}
 )
 install(SCRIPT "${deploy_script}")
 
