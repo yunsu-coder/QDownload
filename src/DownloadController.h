@@ -1,6 +1,7 @@
 #pragma once
 
 #include "EmbeddedProxy.h"
+#include "DownloadMemoryStore.h"
 #include "ProtocolRouter.h"
 
 #include <QElapsedTimer>
@@ -54,6 +55,7 @@ class DownloadController final : public QObject
     Q_PROPERTY(QStringList hlsVariants READ hlsVariants NOTIFY hlsVariantsChanged)
     Q_PROPERTY(int completedSegments READ completedSegments NOTIFY progressChanged)
     Q_PROPERTY(int totalSegments READ totalSegments NOTIFY progressChanged)
+    Q_PROPERTY(QString memoryHint READ memoryHint NOTIFY routeChanged)
     Q_PROPERTY(bool embeddedProxyConfigured READ embeddedProxyConfigured
                NOTIFY embeddedProxyChanged)
     Q_PROPERTY(bool embeddedProxyRunning READ embeddedProxyRunning
@@ -93,6 +95,7 @@ public:
     QStringList hlsVariants() const;
     int completedSegments() const;
     int totalSegments() const;
+    QString memoryHint() const;
     bool embeddedProxyConfigured() const;
     bool embeddedProxyRunning() const;
     QString embeddedProxyStatus() const;
@@ -115,6 +118,7 @@ public:
     Q_INVOKABLE void prewarmProxyForUrl(const QString &url);
     Q_INVOKABLE void importEmbeddedSubscription(const QString &subscriptionUrl);
     Q_INVOKABLE void clearEmbeddedSubscription();
+    Q_INVOKABLE bool clearDownloadMemory();
     Q_INVOKABLE QString clipboardUrl() const;
 
 signals:
@@ -162,6 +166,8 @@ private:
     void computeDownloadedBytes();
     void configureNetworkProxy();
     bool prepareRouteForProbe();
+    bool applyMemoryPolicy(const QUrl &url);
+    void rememberCurrentOutcome(bool success);
     void restorePersistedTask();
     bool persistTaskState();
     void clearPersistedTask();
@@ -202,6 +208,7 @@ private:
     QNetworkAccessManager m_network;
     EmbeddedProxy m_embeddedProxy;
     std::unique_ptr<TaskStore> m_taskStore;
+    std::unique_ptr<DownloadMemoryStore> m_memoryStore;
     QPointer<QNetworkReply> m_probeReply;
     CurlMultiWorker *m_worker = nullptr;
     CurlFtpWorker *m_ftpWorker = nullptr;
@@ -253,6 +260,7 @@ private:
     bool m_sourceChanged = false;
     bool m_restoredTask = false;
     bool m_ftpResumePending = false;
+    bool m_routeFromMemory = false;
     bool m_acceptsRanges = false;
     int m_connectionLimit = 16;
     ProtocolRouter::Protocol m_protocol = ProtocolRouter::Protocol::Http;
@@ -261,6 +269,10 @@ private:
     QString m_hlsWorkDirectory;
     int m_completedSegments = 0;
     int m_totalSegments = 0;
+    int m_initialConnectionLimit = 4;
+    int m_peakActiveLanes = 0;
+    double m_peakSpeedMBps = 0.0;
+    QString m_memoryHint;
     QString m_ftpTransferUrl;
     QElapsedTimer m_persistClock;
     qint64 m_lastPersistedBytes = 0;

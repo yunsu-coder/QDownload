@@ -40,6 +40,7 @@ public:
                     bool resume,
                     QString proxyUrl,
                     int maxConnections,
+                    int initialConnections,
                     QObject *parent = nullptr);
 
     void requestPause();
@@ -93,6 +94,7 @@ private:
     bool m_resume = false;
     QString m_proxyUrl;
     int m_maxConnections = 16;
+    int m_initialConnections = 4;
 
     std::atomic_bool m_pauseRequested{false};
     std::atomic<qint64> m_bytesWritten{0};

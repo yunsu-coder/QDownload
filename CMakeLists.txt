@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(QuickDL VERSION 0.3.0 LANGUAGES CXX)
+project(QuickDL VERSION 0.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -34,6 +34,8 @@ qt_add_executable(QuickDL
     src/SecureStore.h
     src/TaskStore.cpp
     src/TaskStore.h
+    src/DownloadMemoryStore.cpp
+    src/DownloadMemoryStore.h
     src/FileHashWorker.cpp
     src/FileHashWorker.h
     src/ProtocolRouter.cpp
@@ -159,6 +161,22 @@ target_include_directories(quickdl_store_tests PRIVATE
 target_link_libraries(quickdl_store_tests PRIVATE Qt6::Core Qt6::Sql Qt6::Test)
 add_test(NAME quickdl_store_tests COMMAND quickdl_store_tests)
 set_tests_properties(quickdl_store_tests PROPERTIES LABELS unit)
+
+qt_add_executable(quickdl_memory_tests
+    tests/test_download_memory.cpp
+    src/DownloadMemoryStore.cpp
+    src/DownloadMemoryStore.h
+)
+target_include_directories(quickdl_memory_tests PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+)
+target_link_libraries(quickdl_memory_tests PRIVATE
+    Qt6::Core
+    Qt6::Sql
+    Qt6::Test
+)
+add_test(NAME quickdl_memory_tests COMMAND quickdl_memory_tests)
+set_tests_properties(quickdl_memory_tests PROPERTIES LABELS unit)
 
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)

@@ -3,7 +3,8 @@
 当前目录包含可发布的 Qt 6 桌面 Beta。主界面使用 Qt Quick/QML，
 传输核心使用 C++、libcurl multi 与 Qt Network。
 
-当前版本为 **0.3.0**，已覆盖 V2.0 的单任务 HTTP、HLS VOD 与 FTP/FTPS：
+当前版本为 **0.4.0**，已覆盖 V2.0 的单任务 HTTP、HLS VOD 与 FTP/FTPS，
+以及下载策略记忆：
 小分块工作窃取、429 退避、慢尾拆分、SQLite 重启恢复、源文件变化保护、
 AES-128 和 SHA-256 完成校验。阶段记录见
 [V2 迭代记录](docs/V2-迭代记录-2026-10-21.md)。
@@ -59,6 +60,9 @@ build/QuickDL.app
 - SQLite 持久化任务、分段偏移、ETag 和 Last-Modified
 - 进程被强制结束或正常退出后，下次启动恢复为暂停任务
 - ETag、Last-Modified、最终地址或文件大小变化时禁止拼接
+- 按站点记忆直连、内置代理、iKuuu 的成功率、速度和最佳并发数
+- 按资源路径记忆 Range 能力、文件大小、ETag 和 Last-Modified
+- Auto 路由优先复用高置信度历史策略，失败和老化自动降低权重
 - HLS VOD master/media playlist 解析与清晰度选择
 - HLS 8 路分片并发、重试、暂停和启动恢复
 - HLS AES-128 标准密钥获取与解密
@@ -104,8 +108,8 @@ build/QuickDL.app
   --test-dir build --output-on-failure
 ```
 
-CTest 覆盖 AES 标准向量、HLS playlist、协议路由、SQLite 恢复，并启动真实
-HTTP/HLS 服务器验证 429 重试、慢尾拆分和最终 SHA-256。
+CTest 覆盖 AES 标准向量、HLS playlist、协议路由、SQLite 恢复和下载策略记忆，
+并启动真实 HTTP/HLS 服务器验证 429 重试、慢尾拆分、记忆复用和最终 SHA-256。
 
 ## 性能说明
 

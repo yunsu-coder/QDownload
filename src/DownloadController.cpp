@@ -207,11 +207,64 @@ QString ftpSecretAccount(const QUrl &url)
     return QStringLiteral("ftp:%1:%2")
         .arg(url.host().toLower(), url.userName());
 }
+
+QString memoryHostForUrl(const QUrl &url)
+{
+    QString host = url.host().trimmed().toLower();
+    if (host.startsWith(QStringLiteral("www."))) {
+        host = host.mid(4);
+    }
+    if (url.port() > 0) {
+        host += QStringLiteral(":%1").arg(url.port());
+    }
+    return host;
+}
+
+bool isRouteRelatedFailure(const QString &message)
+{
+    const QString lower = message.toLower();
+    if (lower.contains(QStringLiteral("源文件已变化"))
+        || lower.contains(QStringLiteral("保存"))
+        || lower.contains(QStringLiteral("写入"))
+        || lower.contains(QStringLiteral("重命名"))
+        || lower.contains(QStringLiteral("空间不足"))
+        || lower.contains(QStringLiteral("权限"))) {
+        return false;
+    }
+    static const QStringList markers{
+        QStringLiteral("connect"),
+        QStringLiteral("connection"),
+        QStringLiteral("proxy"),
+        QStringLiteral("代理"),
+        QStringLiteral("timeout"),
+        QStringLiteral("超时"),
+        QStringLiteral("reset"),
+        QStringLiteral("tls"),
+        QStringLiteral("ssl"),
+        QStringLiteral("certificate"),
+        QStringLiteral("dns"),
+        QStringLiteral("http 403"),
+        QStringLiteral("http 407"),
+        QStringLiteral("http 408"),
+        QStringLiteral("http 429"),
+        QStringLiteral("http 500"),
+        QStringLiteral("http 502"),
+        QStringLiteral("http 503"),
+        QStringLiteral("http 504")
+    };
+    for (const QString &marker : markers) {
+        if (lower.contains(marker)) {
+            return true;
+        }
+    }
+    return false;
+}
 }
 
 DownloadController::DownloadController(QObject *parent)
     : QObject(parent)
     , m_taskStore(std::make_unique<TaskStore>())
+    , m_memoryStore(std::make_unique<DownloadMemoryStore>())
 {
     m_ikuuuWarmTimer = new QTimer(this);
     m_ikuuuWarmTimer->setSingleShot(true);
@@ -278,6 +331,12 @@ DownloadController::DownloadController(QObject *parent)
                 .arg(m_taskStore->lastError()));
     } else {
         restorePersistedTask();
+    }
+    if (!m_memoryStore->ready()) {
+        logEvent(
+            QStringLiteral("memory"),
+            QStringLiteral("download memory unavailable: %1")
+                .arg(m_memoryStore->lastError()));
     }
 }
 
@@ -377,6 +436,7 @@ QString DownloadController::protocolName() const
 QStringList DownloadController::hlsVariants() const { return m_hlsVariants; }
 int DownloadController::completedSegments() const { return m_completedSegments; }
 int DownloadController::totalSegments() const { return m_totalSegments; }
+QString DownloadController::memoryHint() const { return m_memoryHint; }
 bool DownloadController::embeddedProxyConfigured() const
 {
     return m_embeddedProxy.configured();
@@ -678,7 +738,9 @@ void DownloadController::handleHlsProgress(
     m_completedSegments = completedSegments;
     m_totalSegments = totalSegments;
     m_activeLanes = activeRequests;
+    m_peakActiveLanes = qMax(m_peakActiveLanes, activeRequests);
     updateSpeed();
+    m_peakSpeedMBps = qMax(m_peakSpeedMBps, m_speedMBps);
     emit lanesChanged();
     emit progressChanged();
     if (m_persistClock.elapsed() >= 1000
@@ -829,7 +891,9 @@ void DownloadController::startFtpWorker(bool resume)
                     }
                 }
                 m_activeLanes = 1;
+                m_peakActiveLanes = qMax(m_peakActiveLanes, 1);
                 updateSpeed();
+                m_peakSpeedMBps = qMax(m_peakSpeedMBps, m_speedMBps);
                 emit lanesChanged();
                 emit progressChanged();
                 if (m_persistClock.elapsed() >= 1000
@@ -945,8 +1009,93 @@ void DownloadController::stopFtpWorker()
     worker->deleteLater();
 }
 
+bool DownloadController::applyMemoryPolicy(const QUrl &url)
+{
+    m_routeFromMemory = false;
+    m_initialConnectionLimit = 4;
+    m_memoryHint.clear();
+    if (!m_memoryStore || !m_memoryStore->ready()) {
+        return false;
+    }
+    const QString host = memoryHostForUrl(url);
+    if (host.isEmpty()) {
+        return false;
+    }
+    const DownloadMemoryStore::HostMemory hostMemory =
+        m_memoryStore->lookupHost(host);
+    const DownloadMemoryStore::ResourceMemory resourceMemory =
+        m_memoryStore->lookupResource(url);
+
+    if (hostMemory.recommendedConnections > 0) {
+        m_initialConnectionLimit = qBound(
+            4, hostMemory.recommendedConnections, m_connectionLimit);
+    }
+    if (hostMemory.isValid()) {
+        QString routeLabel;
+        if (hostMemory.preferredRoute == QStringLiteral("direct")) {
+            routeLabel = QStringLiteral("直连");
+        } else if (hostMemory.preferredRoute == QStringLiteral("builtin")) {
+            routeLabel = QStringLiteral("内置代理");
+        } else {
+            routeLabel = QStringLiteral("iKuuu");
+        }
+        m_memoryHint = QStringLiteral("历史：%1 · %2 路 · %3 MB/s")
+            .arg(routeLabel)
+            .arg(m_initialConnectionLimit)
+            .arg(hostMemory.expectedSpeedMBps, 0, 'f', 1);
+        if (resourceMemory.supportsRanges && m_memoryHint.size() < 96) {
+            m_memoryHint += QStringLiteral(" · Range");
+        }
+    } else if (resourceMemory.totalBytes > 0) {
+        m_memoryHint = QStringLiteral("历史：已知资源元数据");
+    }
+
+    if (m_proxyMode != QStringLiteral("auto") || !hostMemory.isValid()) {
+        return false;
+    }
+    if (hostMemory.preferredRoute == QStringLiteral("direct")) {
+        m_routeFromMemory = true;
+        logEvent(
+            QStringLiteral("memory"),
+            QStringLiteral("reuse host=%1 route=direct connections=%2")
+                .arg(host)
+                .arg(m_initialConnectionLimit));
+        setDirectRoute(QStringLiteral("历史记忆 · 直连 · %1 路")
+                           .arg(m_initialConnectionLimit));
+        return true;
+    }
+    if (hostMemory.preferredRoute == QStringLiteral("builtin")
+        && m_embeddedProxy.configured()) {
+        m_routeFromMemory = true;
+        logEvent(
+            QStringLiteral("memory"),
+            QStringLiteral("reuse host=%1 route=builtin connections=%2")
+                .arg(host)
+                .arg(m_initialConnectionLimit));
+        setEmbeddedRoute(QStringLiteral("历史记忆 · 内置代理 · %1 路")
+                             .arg(m_initialConnectionLimit));
+        return true;
+    }
+    if (hostMemory.preferredRoute == QStringLiteral("ikuuu")
+        && canUseProxy()) {
+        m_routeFromMemory = true;
+        logEvent(
+            QStringLiteral("memory"),
+            QStringLiteral("reuse host=%1 route=ikuuu connections=%2")
+                .arg(host)
+                .arg(m_initialConnectionLimit));
+        setIKuuuRoute(QStringLiteral("历史记忆 · iKuuu · %1 路")
+                          .arg(m_initialConnectionLimit));
+        return true;
+    }
+    return false;
+}
+
 bool DownloadController::prepareRouteForProbe()
 {
+    if (applyMemoryPolicy(m_url)) {
+        return true;
+    }
     if (m_proxyMode == QStringLiteral("builtin") && !m_embeddedProxy.configured()) {
         fail(QStringLiteral("请先导入 Clash 订阅，再使用内置代理。"));
         return false;
@@ -967,6 +1116,62 @@ bool DownloadController::prepareRouteForProbe()
         setRouteViaProxy(false, QStringLiteral("智能路由 · 正在探测资源"));
     }
     return true;
+}
+
+bool DownloadController::clearDownloadMemory()
+{
+    if (!m_memoryStore || !m_memoryStore->ready()) {
+        return false;
+    }
+    const bool cleared = m_memoryStore->clearAll();
+    if (cleared) {
+        m_memoryHint.clear();
+        m_routeFromMemory = false;
+        emit routeChanged();
+        logEvent(QStringLiteral("memory"), QStringLiteral("cleared"));
+    }
+    return cleared;
+}
+
+void DownloadController::rememberCurrentOutcome(bool success)
+{
+    if (!m_memoryStore || !m_memoryStore->ready()
+        || !m_hasTask || m_url.isEmpty()) {
+        return;
+    }
+    DownloadMemoryStore::Outcome outcome;
+    outcome.url = m_url;
+    outcome.effectiveUrl = m_effectiveUrl.toString();
+    outcome.finalPath = m_finalPath;
+    outcome.fileHash = m_sha256;
+    outcome.route = DownloadMemoryStore::routeForProxyUsage(
+        m_routeViaProxy, m_useEmbeddedProxy);
+    outcome.error = m_errorString;
+    outcome.bytes = m_downloadedBytes;
+    outcome.speedMBps = m_peakSpeedMBps;
+    outcome.peakConnections = qMax(1, m_peakActiveLanes);
+    outcome.supportsRanges = m_acceptsRanges;
+    outcome.etag = m_etag;
+    outcome.lastModified = m_lastModified;
+    outcome.success = success;
+    if (!m_memoryStore->recordOutcome(outcome)) {
+        logEvent(
+            QStringLiteral("memory"),
+            QStringLiteral("record failed: %1")
+                .arg(m_memoryStore->lastError()));
+        return;
+    }
+    logEvent(
+        QStringLiteral("memory"),
+        QStringLiteral("recorded host=%1 route=%2 success=%3 "
+                       "connections=%4 speed=%5")
+            .arg(
+                memoryHostForUrl(
+                    m_effectiveUrl.isEmpty() ? m_url : m_effectiveUrl),
+                outcome.route)
+            .arg(success)
+            .arg(outcome.peakConnections)
+            .arg(outcome.speedMBps, 0, 'f', 1));
 }
 
 bool DownloadController::persistTaskState()
@@ -1233,6 +1438,7 @@ void DownloadController::handleProbeFinished()
                              .arg(statusCode));
                 reply->deleteLater();
                 m_probeReply.clear();
+                rememberCurrentOutcome(false);
                 setEmbeddedRoute(QStringLiteral("直连失败 · 自动切换内置代理"));
                 startProbe();
                 return;
@@ -1244,6 +1450,7 @@ void DownloadController::handleProbeFinished()
                              .arg(error));
                 reply->deleteLater();
                 m_probeReply.clear();
+                rememberCurrentOutcome(false);
                 setIKuuuRoute(QStringLiteral("直连探测失败 · 自动切换 iKuuu"));
                 startProbe();
                 return;
@@ -1256,6 +1463,7 @@ void DownloadController::handleProbeFinished()
                          .arg(error));
             reply->deleteLater();
             m_probeReply.clear();
+            rememberCurrentOutcome(false);
             setRouteViaProxy(false, QStringLiteral("iKuuu 探测失败 · 回退直连"));
             startProbe();
             return;
@@ -1364,6 +1572,7 @@ void DownloadController::handleProbeFinished()
 
     if (m_proxyMode == QStringLiteral("auto")
         && !m_routeViaProxy
+        && !m_routeFromMemory
         && isLikelyOverseas(m_effectiveUrl)) {
         if (m_embeddedProxy.configured()) {
             setEmbeddedRoute(QStringLiteral("识别为海外资源 · 自动切换内置代理"));
@@ -1470,6 +1679,7 @@ void DownloadController::startWorker(bool resume)
                 if (m_proxyMode == QStringLiteral("auto")
                     && !m_directTransferFallbackAttempted) {
                     m_directTransferFallbackAttempted = true;
+                    rememberCurrentOutcome(false);
                     setRouteViaProxy(
                         false,
                         QStringLiteral("代理启动超时 · 本次回退直连"));
@@ -1519,6 +1729,7 @@ void DownloadController::startWorkerNow(bool resume)
         resume,
         m_routeViaProxy ? parseProxyTarget(activeProxyEndpoint()).normalizedUrl : QString(),
         m_connectionLimit,
+        m_initialConnectionLimit,
         this);
     m_worker = worker;
     connect(worker, &CurlMultiWorker::progress,
@@ -1559,9 +1770,11 @@ void DownloadController::handleWorkerProgress(
     }
     if (m_activeLanes != activeLanes) {
         m_activeLanes = activeLanes;
+        m_peakActiveLanes = qMax(m_peakActiveLanes, activeLanes);
         emit lanesChanged();
     }
     updateSpeed();
+    m_peakSpeedMBps = qMax(m_peakSpeedMBps, m_speedMBps);
     emit progressChanged();
     if (m_persistClock.elapsed() >= 1000
         || qAbs(m_downloadedBytes - m_lastPersistedBytes)
@@ -1666,9 +1879,11 @@ void DownloadController::handleWorkerFinished()
                          QStringLiteral("transfer fallback direct-to-proxy error=%1")
                              .arg(error));
                 if (m_embeddedProxy.configured()) {
+                    rememberCurrentOutcome(false);
                     setEmbeddedRoute(
                         QStringLiteral("下载连接失败 · 自动重试内置代理"));
                 } else {
+                    rememberCurrentOutcome(false);
                     setIKuuuRoute(
                         QStringLiteral("下载连接失败 · 自动重试 iKuuu"));
                 }
@@ -1680,6 +1895,7 @@ void DownloadController::handleWorkerFinished()
                 logEvent(QStringLiteral("route"),
                          QStringLiteral("transfer fallback proxy-to-direct error=%1")
                              .arg(error));
+                rememberCurrentOutcome(false);
                 setDirectRoute(
                     QStringLiteral("代理下载失败 · 自动回退直连"));
                 startWorker(true);
@@ -2233,6 +2449,7 @@ void DownloadController::handleHashFinished(
             .arg(m_finalPath)
             .arg(m_downloadedBytes)
             .arg(m_sha256));
+    rememberCurrentOutcome(true);
     if (m_protocol == ProtocolRouter::Protocol::Hls) {
         cleanupHlsArtifacts();
     }
@@ -2294,6 +2511,9 @@ void DownloadController::fail(const QString &message)
     setState(QStringLiteral("Failed"));
     emit errorChanged();
     emit progressChanged();
+    if (isRouteRelatedFailure(message)) {
+        rememberCurrentOutcome(false);
+    }
     persistTaskState();
 }
 
@@ -2346,6 +2566,11 @@ void DownloadController::resetForNewTask()
     m_validateResumeOnProbe = false;
     m_lastPersistedBytes = 0;
     m_lastSampleBytes = 0;
+    m_routeFromMemory = false;
+    m_initialConnectionLimit = 4;
+    m_peakActiveLanes = 0;
+    m_peakSpeedMBps = 0.0;
+    m_memoryHint.clear();
     if (stateWasChanged) {
         emit stateChanged();
     }

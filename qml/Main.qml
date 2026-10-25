@@ -302,6 +302,7 @@ ApplicationWindow {
         proxyAccent: proxyModeColor()
         routeText: downloadController.activeRoute
         routeNoteText: downloadController.routeNote
+        memoryHint: downloadController.memoryHint
         connectionLimitText: downloadController.connectionLimit + " 路"
         directoryEditable: !downloadController.hasTask
             || downloadController.state === "Completed"
@@ -324,6 +325,12 @@ ApplicationWindow {
         onCycleConnectionLimitRequested: {
             downloadController.cycleConnectionLimit()
             showToast("下载通道：" + downloadController.connectionLimit)
+        }
+        onClearMemoryRequested: {
+            if (downloadController.clearDownloadMemory())
+                showToast("下载记忆已清除")
+            else
+                showToast("没有可清除的下载记忆")
         }
         onManageProxyRequested: {
             settingsDialog.close()

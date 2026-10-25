@@ -11,6 +11,7 @@ Dialog {
     property color proxyAccent: "#2F73E8"
     property string routeText: ""
     property string routeNoteText: ""
+    property string memoryHint: ""
     property string connectionLimitText: ""
     property bool directoryEditable: true
     property bool connectionEditable: true
@@ -21,6 +22,7 @@ Dialog {
     signal cycleProxyRequested()
     signal cycleConnectionLimitRequested()
     signal manageProxyRequested()
+    signal clearMemoryRequested()
 
     modal: true
     width: 500
@@ -172,6 +174,8 @@ Dialog {
                         ToolTip.text: control.routeText
                             + (control.routeNoteText.length > 0
                                 ? "\n" + control.routeNoteText : "")
+                            + (control.memoryHint.length > 0
+                                ? "\n" + control.memoryHint : "")
                         ToolTip.delay: 350
                     }
                 }
@@ -224,18 +228,36 @@ Dialog {
 
         Item { Layout.fillHeight: true }
 
-        AppButton {
-            text: "完成"
-            primary: true
-            Layout.alignment: Qt.AlignRight
-            Layout.preferredWidth: 76
-            Layout.preferredHeight: 30
-            accent: control.themeRef.cyan
-            panelColor: control.themeRef.elevated
-            borderColor: control.themeRef.border
-            uiFont: control.themeRef.uiFont
-            numericFont: control.themeRef.numericFont
-            onClicked: control.close()
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+
+            Item { Layout.fillWidth: true }
+
+            AppButton {
+                text: "清记忆"
+                Layout.preferredWidth: 72
+                Layout.preferredHeight: 30
+                accent: control.themeRef.warning
+                panelColor: control.themeRef.elevated
+                borderColor: control.themeRef.border
+                uiFont: control.themeRef.uiFont
+                numericFont: control.themeRef.numericFont
+                onClicked: control.clearMemoryRequested()
+            }
+
+            AppButton {
+                text: "完成"
+                primary: true
+                Layout.preferredWidth: 76
+                Layout.preferredHeight: 30
+                accent: control.themeRef.cyan
+                panelColor: control.themeRef.elevated
+                borderColor: control.themeRef.border
+                uiFont: control.themeRef.uiFont
+                numericFont: control.themeRef.numericFont
+                onClicked: control.close()
+            }
         }
     }
 }

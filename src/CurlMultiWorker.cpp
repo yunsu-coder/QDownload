@@ -35,6 +35,7 @@ CurlMultiWorker::CurlMultiWorker(QString url,
                                  bool resume,
                                  QString proxyUrl,
                                  int maxConnections,
+                                 int initialConnections,
                                  QObject *parent)
     : QThread(parent)
     , m_url(std::move(url))
@@ -45,6 +46,7 @@ CurlMultiWorker::CurlMultiWorker(QString url,
     , m_resume(resume)
     , m_proxyUrl(std::move(proxyUrl))
     , m_maxConnections(qBound(1, maxConnections, 64))
+    , m_initialConnections(qBound(1, initialConnections, m_maxConnections))
 {
     qRegisterMetaType<QVector<qint64>>("QVector<qint64>");
 }
@@ -280,7 +282,7 @@ void CurlMultiWorker::run()
 
     int nextSegment = 0;
     int inFlight = 0;
-    int activeConnectionLimit = qMin(4, m_maxConnections);
+    int activeConnectionLimit = m_initialConnections;
     QVector<int> retryQueue;
     QHash<int, qint64> retryDue;
     auto startQueuedSegments = [&]() {

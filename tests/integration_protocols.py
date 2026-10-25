@@ -5,6 +5,7 @@ import http.server
 import os
 import pathlib
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -115,7 +116,15 @@ class Server:
         self.httpd.server_close()
 
 
-def run_app(app, url, root, name, extra=None, delay=5000):
+def run_app(
+    app,
+    url,
+    root,
+    name,
+    extra=None,
+    delay=5000,
+    proxy_mode="direct",
+):
     downloads = root / "downloads"
     downloads.mkdir(exist_ok=True)
     data = root / "data"
@@ -126,7 +135,7 @@ def run_app(app, url, root, name, extra=None, delay=5000):
         url,
         "--autostart",
         "--proxy-mode",
-        "direct",
+        proxy_mode,
         "--download-dir",
         str(downloads),
         "--screenshot",
@@ -217,6 +226,7 @@ def main():
                 root,
                 "http-retry",
                 delay=7000,
+                proxy_mode="auto",
             )
             retry_output = downloads / "retry-test.bin"
             if not retry_output.exists():
@@ -264,6 +274,20 @@ def main():
                 )
             if digest(hls_output) != hashlib.sha256(hls_expected).hexdigest():
                 raise AssertionError("HLS SHA-256 mismatch")
+
+        memory_db = root / "data" / "download-memory.sqlite"
+        if not memory_db.exists():
+            raise AssertionError("download memory database was not created")
+        with sqlite3.connect(memory_db) as connection:
+            routes = connection.execute(
+                "SELECT preferred_route,recommended_connections "
+                "FROM host_memory WHERE host LIKE '127.0.0.1:%'"
+            ).fetchall()
+        if not routes or all(route != "direct" for route, _ in routes):
+            raise AssertionError(f"unexpected remembered routes: {routes}")
+        app_log = root / "data" / "logs" / "quickdl.log"
+        if not app_log.exists() or "reuse host=" not in app_log.read_text():
+            raise AssertionError("successful host policy was not reused")
 
     print("HTTP and HLS integration tests passed")
 
