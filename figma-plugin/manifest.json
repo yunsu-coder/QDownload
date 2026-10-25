@@ -1,0 +1,8 @@
+{
+  "name": "QuickDL Sasuke Prototype Builder",
+  "id": "1977598628300561291",
+  "api": "1.0.0",
+  "main": "code.js",
+  "documentAccess": "dynamic-page",
+  "editorType": ["figma"]
+}

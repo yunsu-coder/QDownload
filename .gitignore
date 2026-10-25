@@ -1,0 +1,13 @@
+build/
+build-*/
+dist/
+docs/screenshots/
+*.part
+*.download
+.DS_Store
+local_assets/sasuke/*.jpg
+local_assets/sasuke/*.jpeg
+local_assets/sasuke/*.png
+local_assets/characters/*.jpg
+local_assets/characters/*.jpeg
+local_assets/characters/*.png

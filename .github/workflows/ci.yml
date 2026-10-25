@@ -1,0 +1,85 @@
+name: QuickDL CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            qt_arch: clang_64
+          - os: ubuntu-24.04
+            qt_arch: linux_gcc_64
+          - os: windows-2022
+            qt_arch: win64_msvc2022_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          arch: ${{ matrix.qt_arch }}
+          cache: true
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install curl
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev libgl1-mesa-dev
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install curl:x64-windows
+
+      - name: Configure
+        shell: bash
+        run: |
+          extra=()
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            extra+=("-DCURL_ROOT=$(brew --prefix curl)")
+          fi
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            extra+=("-DCMAKE_TOOLCHAIN_FILE=${VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake")
+          fi
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release "${extra[@]}"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Unit and parser tests
+        run: ctest --test-dir build -C Release -L unit --output-on-failure
+
+      - name: Protocol integration tests
+        if: runner.os != 'Windows'
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --test-dir build -C Release -L integration --output-on-failure
+
+      - name: Package macOS Beta
+        if: runner.os == 'macOS'
+        run: |
+          cpack --config build/CPackConfig.cmake -B dist
+          mkdir -p release
+          cp dist/*.dmg release/
+          shasum -a 256 release/*.dmg > release/SHA256SUMS
+
+      - name: Upload macOS Beta
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuickDL-macOS-Beta
+          path: release/
+
